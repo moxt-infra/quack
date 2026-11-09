@@ -405,6 +405,29 @@ def test_security_interleaved_producers_keep_shared_cache_entry_restorable(tmp_p
     assert (tmp_path / "reader/dist/result.txt").read_text() == "built"
 
 
+def test_security_local_hit_does_not_publish_metadata_for_missing_remote_archive(tmp_path):
+    with s3_server(writable=True) as (store, endpoint):
+        metadata_key, first_metadata = publish_competing_normal_cache_entries(tmp_path, store, endpoint)
+        second_metadata = store.objects[metadata_key]
+        # The first producer's archive is gone remotely, while its local copy still satisfies the hit.
+        first_digest = json.loads(first_metadata)["file_checksum"]
+        del store.objects[f"{metadata_key.removesuffix('_metadata.json')}{first_digest}.tar.zst"]
+        (tmp_path / "first/dist/result.txt").unlink()
+        store.requests.clear()
+        refresh = run_cli(
+            tmp_path / "first", "demo:build", endpoint=endpoint, settings={"QUACK_SAVE_FOR_LOAD": "false"}
+        )
+        assert refresh.returncode == 0, refresh.stderr
+        assert (tmp_path / "first/dist/result.txt").read_text() == "built"
+        assert (tmp_path / "first/builds.txt").read_text() == "ran"
+        assert not any(method == "PUT" for method, _, _ in store.requests)
+        assert store.objects[metadata_key] == second_metadata
+        reader = run_cli(tmp_path / "reader", "demo:build", endpoint=endpoint, settings={"QUACK_CACHE_ACCESS": "read"})
+    assert reader.returncode == 0, reader.stderr
+    assert not (tmp_path / "reader/builds.txt").exists()
+    assert (tmp_path / "reader/dist/result.txt").read_text() == "different"
+
+
 def test_security_mismatched_target_named_cache_entry_is_rebuilt_and_republished(tmp_path):
     checksum = hashlib.sha256(repr([]).encode()).hexdigest()
     digest = "0" * 64
