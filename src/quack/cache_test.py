@@ -83,6 +83,31 @@ class TestTargetCacheBackendTypeCloud:
 
     @mock.patch("quack.cache.CloudClient")
     @mock.patch("quack.cache.TargetCacheBackendTypeLocal")
+    def test_load_exists_skips_access_time_update_for_unpublished_archive(
+        self,
+        mock_local_backend: mock.Mock,
+        mock_cloud_client_class: mock.Mock,
+        mock_test_spec: mock.Mock,
+    ):
+        mock_cloud_client = mock.Mock()
+        mock_cloud_client.exists.return_value = False
+        mock_cloud_client_class.return_value = mock_cloud_client
+
+        config = Config.model_construct()
+        target = mock_test_spec.targets["quack:test"]
+        target._checksum_value = ""
+        backend = TargetCacheBackendTypeCloud(config, mock_test_spec.app_name)
+
+        mock_local_backend.return_value.exists.return_value = True
+        mock_local_backend.return_value.read_metadata.return_value.file_checksum = "c" * 64
+
+        backend.load(target)
+
+        mock_cloud_client.exists.assert_called_once_with(f"{backend.get_cache_path(target)}/{'c' * 64}.tar.zst")
+        mock_cloud_client.upload.assert_not_called()
+
+    @mock.patch("quack.cache.CloudClient")
+    @mock.patch("quack.cache.TargetCacheBackendTypeLocal")
     def test_load_not_exists(
         self,
         mock_local_backend: mock.Mock,
